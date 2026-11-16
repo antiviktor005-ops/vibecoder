@@ -41,7 +41,7 @@ async def sessions(cfg):
 
 
 @pytest.fixture
-async def pg_sessions(cfg):
+async def pg_engine():
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
         pytest.skip("Для интеграционного теста задайте TEST_DATABASE_URL.")
@@ -53,22 +53,27 @@ async def pg_sessions(cfg):
         pg_url(url), connect_args={"server_settings": {"search_path": schema}}
     )
     try:
-        async with engine.begin() as conn:
-
-            def migrate(connection):
-                migration = Migration("alembic.ini")
-                migration.attributes["connection"] = connection
-                command.upgrade(migration, "head")
-
-            await conn.run_sync(migrate)
-        factory = async_sessionmaker(engine, expire_on_commit=False)
-        await bootstrap(factory, cfg.admin_telegram_id)
-        yield factory
+        yield engine
     finally:
         await engine.dispose()
         async with root.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
         await root.dispose()
+
+
+@pytest.fixture
+async def pg_sessions(cfg, pg_engine):
+    async with pg_engine.begin() as conn:
+
+        def migrate(connection):
+            migration = Migration("alembic.ini")
+            migration.attributes["connection"] = connection
+            command.upgrade(migration, "head")
+
+        await conn.run_sync(migrate)
+    factory = async_sessionmaker(pg_engine, expire_on_commit=False)
+    await bootstrap(factory, cfg.admin_telegram_id)
+    return factory
 
 
 @pytest.fixture

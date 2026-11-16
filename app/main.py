@@ -6,7 +6,8 @@ from aiogram.client.default import DefaultBotProperties
 
 from app.bot.handlers import dispatcher, telegram_commands
 from app.config import Config
-from app.db.session import bootstrap, database
+from app.core.errors import safe_error
+from app.db.session import database, prepare_database
 from app.integrations.ai import AI
 from app.scheduler.search import Search
 from app.services.commands import Commands
@@ -14,14 +15,14 @@ from app.services.commands import Commands
 log = logging.getLogger(__name__)
 
 
-async def retry(action):
+async def retry(stage, action):
     for attempt in range(5):
         try:
             return await action()
         except Exception as exc:
+            log.warning("%s · попытка %d/5 · %s", stage, attempt + 1, safe_error(exc))
             if attempt == 4:
                 raise
-            log.warning("Повтор подключения %d (%s)", attempt + 1, type(exc).__name__)
             await asyncio.sleep(2**attempt)
 
 
@@ -44,9 +45,13 @@ async def main():
     search = Search(cfg, sessions, bot)
     dp = dispatcher(cfg.admin_telegram_id)
     try:
-        await retry(lambda: bootstrap(sessions, cfg.admin_telegram_id))
-        await retry(lambda: bot.delete_webhook(drop_pending_updates=False))
-        await retry(lambda: bot.set_my_commands(telegram_commands()))
+        await retry(
+            "Подготовка PostgreSQL", lambda: prepare_database(engine, cfg.admin_telegram_id)
+        )
+        await retry(
+            "Telegram deleteWebhook", lambda: bot.delete_webhook(drop_pending_updates=False)
+        )
+        await retry("Telegram setMyCommands", lambda: bot.set_my_commands(telegram_commands()))
         search.scheduler.start()
         log.info("Worker запущен. Интервал поиска %d мин.", cfg.search_interval_minutes)
         await dp.start_polling(

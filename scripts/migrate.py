@@ -6,6 +6,7 @@ import time
 from alembic.config import Config
 
 from alembic import command
+from app.core.errors import safe_error
 
 
 def main():
@@ -15,7 +16,7 @@ def main():
             print("Схема БД обновлена.", flush=True)
             return
         except Exception as exc:
-            logging.error("Миграция, попытка %d: %s", attempt + 1, type(exc).__name__)
+            logging.error("Миграция, попытка %d: %s", attempt + 1, safe_error(exc))
             if attempt == 4:
                 raise SystemExit(1) from None
             time.sleep(2**attempt)
